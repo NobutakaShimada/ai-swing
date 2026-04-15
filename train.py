@@ -5,11 +5,11 @@ from swing_env import SwingEnv
 env = SwingEnv()
 
 # モデルの作成 (MlpPolicy: 64x2層)
-model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003)
+model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003, ent_coef=0.01)
 
 # 学習開始
 print("ブランコの漕ぎ方を学習中...")
-model.learn(total_timesteps=1000000)
+model.learn(total_timesteps=3000000)
 
 # 保存
 model.save("ai_swing_model")

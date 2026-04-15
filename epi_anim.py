@@ -60,50 +60,84 @@ while running :
         if event.type == pygame.QUIT:
             running = False
     
-    screen.fill((255, 255, 255))
+    screen.fill((245, 245, 250))
     d = -0.5 * np.pi  # 角度のオフセット
-    
-    # atMLBを描画
-    for i in range( frame-1, -1,-1):
+
+    def draw_figure(frame_idx, colors, widths, head_color):
+        """1フレーム分の人体+ロープ+座面を太線で描画"""
+        rx0 = L*100*np.cos(x[frame_idx]+d)
+        ry0 = L*100*np.sin(x[frame_idx]+d)
+        pivot = (x0, y0)
+        seat  = (int(x0+rx0), int(y0-ry0))
+        # ロープ
+        pygame.draw.line(screen, colors['rope'], pivot, seat, widths['rope'])
+        # 支点
+        pygame.draw.circle(screen, (40,40,40), pivot, 5)
+        # 座面 (ロープに垂直な短い線)
+        sdx = -np.sin(x[frame_idx]+d)
+        sdy =  np.cos(x[frame_idx]+d)
+        sL = 24
+        seat1 = (int(seat[0] - sdx*sL), int(seat[1] + sdy*sL))
+        seat2 = (int(seat[0] + sdx*sL), int(seat[1] - sdy*sL))
+        pygame.draw.line(screen, colors['seat'], seat1, seat2, 6)
+
+        # 腰の位置 (座面からのオフセット)
+        rx2a = -a*100*np.sin(x[frame_idx]-d)
+        ry2a =  a*100*np.cos(x[frame_idx]-d)
+        hip = (int(seat[0]+rx2a), int(seat[1]-ry2a))
+
+        # 上体 (腰 → 首)
+        rx1 = -L1*100*np.cos(x[frame_idx]+phi[frame_idx]+d)
+        ry1 = -L1*100*np.sin(x[frame_idx]+phi[frame_idx]+d)
+        torso_frac = 0.80
+        neck = (int(hip[0] + rx1*torso_frac), int(hip[1] - ry1*torso_frac))
+        pygame.draw.line(screen, colors['torso'], hip, neck, widths['torso'])
+
+        # 頭部 (首の先に円)
+        head_r = int(L1*100*0.13)
+        head_c = (int(hip[0] + rx1*(torso_frac + 0.10)),
+                  int(hip[1] - ry1*(torso_frac + 0.10)))
+        pygame.draw.circle(screen, head_color, head_c, head_r)
+        pygame.draw.circle(screen, (40,40,40), head_c, head_r, 2)
+
+        # 上腿 (腰 → 膝)
+        rx2 = -b*100*np.sin(x[frame_idx]+d)
+        ry2 =  b*100*np.cos(x[frame_idx]+d)
+        knee = (int(seat[0]+rx2), int(seat[1]-ry2))
+        pygame.draw.line(screen, colors['leg'], hip, knee, widths['leg'])
+
+        # 下腿 (膝 → 足先)
+        rx3 = L3*100*np.cos(x[frame_idx]+psi+d)
+        ry3 = L3*100*np.sin(x[frame_idx]+psi+d)
+        foot = (int(knee[0]+rx3), int(knee[1]-ry3))
+        pygame.draw.line(screen, colors['leg'], knee, foot, widths['leg'])
+
+        # 関節マーカー
+        for jp in (hip, knee, foot):
+            pygame.draw.circle(screen, (40,40,40), jp, 3)
+
+    # atMLBの残像 (薄色細線)
+    ghost_colors = {'rope':(200,200,210),'seat':(210,190,170),
+                    'torso':(255,200,170),'leg':(255,200,170)}
+    ghost_widths = {'rope':2,'torso':5,'leg':4}
+    for i in range(frame-1, -1, -1):
         if epi[i+1] != epi[i]:
             break
-        if atMLB[i]>0:
-            rx0=L*100*np.cos(x[i]+d)
-            ry0=L*100*np.sin(x[i]+d)
-            pygame.draw.aalines(screen, (200, 200, 200),False, [(x0,y0),(x0+rx0,y0-ry0)])
-            rx1=-L1*100*np.cos(x[i]+phi[i]+d)
-            ry1=-L1*100*np.sin(x[i]+phi[i]+d)
-            rx2a =-a*100*np.sin(x[i]-d)
-            ry2a = a*100*np.cos(x[i]-d)
-            pygame.draw.aalines(screen, (255, 165, 100),False
-                        ,[(x0+rx0+rx2a,y0-ry0-ry2a),(x0+rx0+rx2a+rx1,y0-ry0-ry2a-ry1)])  #上体描画
-            pygame.draw.aalines(screen, (255, 165, 100),False
-                        ,[(x0+rx0,y0-ry0),(x0+rx0+rx2a,y0-ry0-ry2a)])  #
+        if atMLB[i] > 0:
+            draw_figure(i, ghost_colors, ghost_widths, (255, 220, 190))
 
-    
-    rx0=L*100*np.cos(x[frame]+d)
-    ry0=L*100*np.sin(x[frame]+d)
-    pygame.draw.aalines(screen, (255, 0, 0),False, [(x0,y0),(x0+rx0,y0-ry0)])
+    # 現在フレーム (濃い太線)
+    cur_colors = {'rope':(120,60,60),'seat':(90,50,20),
+                  'torso':(40,90,200),'leg':(40,90,200)}
+    cur_widths = {'rope':4,'torso':14,'leg':11}
+    draw_figure(frame, cur_colors, cur_widths, (255, 210, 170))
 
-    rx1=-L1*100*np.cos(x[frame]+phi[frame]+d)
-    ry1=-L1*100*np.sin(x[frame]+phi[frame]+d)
-    rx2a =-a*100*np.sin(x[frame]-d)
-    ry2a = a*100*np.cos(x[frame]-d)
-    pygame.draw.aalines(screen, (0, 0, 255),False
-                        ,[(x0+rx0+rx2a,y0-ry0-ry2a),(x0+rx0+rx2a+rx1,y0-ry0-ry2a-ry1)])  #上体描画
-
-    rx2=-b*100*np.sin(x[frame]+d)
-    ry2=b*100*np.cos(x[frame]+d)
-    pygame.draw.aalines(screen, (0, 0, 255),False
-                        ,[(x0+rx0+rx2a,y0-ry0-ry2a),(x0+rx0+rx2,y0-ry0-ry2)]) #上腿描画
-    
-    rx3 = L3*100*np.cos(x[frame]+psi+d)
-    ry3 = L3*100*np.sin(x[frame]+psi+d)
-    pygame.draw.aalines(screen, (0, 0, 255),False
-                        ,[(x0+rx0+rx2,y0-ry0-ry2),(x0+rx0+rx2+rx3,y0-ry0-ry2-ry3)]) #下腿描画
-
-    text_surface = font.render(f"Episode: {epi[frame]}", True, (255, 0, 0))
-    screen.blit(text_surface, (2*x0-120, 2*y0-40)) # 
+    text_surface = font.render(f"Episode: {epi[frame]}", True, (200, 0, 0))
+    screen.blit(text_surface, (2*x0-150, 2*y0-40))
+    tline = font.render(f"t = {t[frame]:6.1f} s", True, (40, 40, 40))
+    screen.blit(tline, (20, 20))
+    xline = font.render(f"|x| = {abs(np.degrees(x[frame])):5.1f} deg", True, (40, 40, 40))
+    screen.blit(xline, (20, 50))
 
     pygame.display.flip()
     clock.tick(100)  # 5 FPS

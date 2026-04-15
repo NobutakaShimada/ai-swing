@@ -50,6 +50,9 @@ class Swing:
         self.coef_Hooke = coef_Hooke
         self.torq_ai = 0
         self.torq_ai_head = 0  # 頭部AIトルク
+        self.u_body_filt = 0.0  # ローパスフィルター後の腰トルク
+        self.u_head_filt = 0.0  # ローパスフィルター後の頭トルク
+        self.tau_u = 0.1        # トルクフィルターの時定数 [s]
 
         self.L =self.cNM[self.chn]  
         self.m0=self.cNG[self.chn]  
@@ -70,14 +73,24 @@ class Swing:
 
     def reset(self):
         r=random.uniform(0.9, 1.1) #少しのランダム性
-        self.phi=r*self.phi_init* math.cos(0.1* math.pi) + self.delta_phi_0 #体初期角
-        self.d_phi=-r*self.omega_phi*self.phi_init* math.sin( 0.1* math.pi) #初期角速度
-        self.z=1.e-60 
-        self.z00=1. 
-        self.t= self.t1= self.t2 =0 
+        # バイアス付きランダム初期条件: 静止スタートを優先
+        # 40%の確率で完全静止スタート、60%の確率でランダム振幅(0〜最大)
+        if random.random() < 0.4:
+            scale = 0.0  # 完全静止スタート
+        else:
+            scale = random.uniform(0.0, 1.0)  # 0〜最大初期振幅
+        phi_init_s = scale * self.phi_init
+        x_init_s   = scale * self.x_init
+        self.phi=r*phi_init_s* math.cos(0.1* math.pi) + self.delta_phi_0 #体初期角
+        self.d_phi=-r*self.omega_phi*phi_init_s* math.sin( 0.1* math.pi) #初期角速度
+        self.z=1.e-60
+        self.z00=1.
+        self.t= self.t1= self.t2 =0
         self.n = 0
-        self.x = self.x_init
+        self.x = x_init_s
 
+        self.u_body_filt = 0.0
+        self.u_head_filt = 0.0
         self.oldz= self.dz= self.oldd_phi= self.d2_phi=0
         self.alpha= 0       # 頭部の頸部関節角(胴体からの相対角)
         self.d_alpha= 0     # 頭部角速度
@@ -125,8 +138,8 @@ class Swing:
               - (m0/2 + m1t + m1h) * G * L * math.sin(x))
 
         # 腰部のバネ復元力 + ダンパ
-        k_waist = 200.0  # [Nm/rad]
-        c_waist = 10.0   # [Nm·s/rad]
+        k_waist = 144.0  # [Nm/rad] 重力不安定化(~113)+ 余裕(~31)で固有周期2.65s
+        c_waist = 10.0   # [Nm·s/rad] 漕ぎを許しつつ第2モードを抑制
         torq_waist = -k_waist * (phi - x) - c_waist * (dphi - dx)
 
         Rphi = (-(m1t*L1t/2 + m1h*L1t) * L * s_px * dx**2
@@ -135,9 +148,9 @@ class Swing:
                 + torq_waist
                 + u_body)
 
-        # 首のバネ復元力 + ダンパ
-        k_neck = 50.0   # [Nm/rad]
-        c_neck = 5.0    # [Nm·s/rad]
+        # 首のバネ復元力 + ダンパ (頭部を胴体に剛結合相当)
+        k_neck = 2000.0  # [Nm/rad]
+        c_neck = 50.0    # [Nm·s/rad]
         torq_neck = -k_neck * (alpha - phi) - c_neck * (dalpha - dphi)
 
         Ralpha = (-m1h*(L1h/2) * L * s_ax * dx**2
@@ -163,6 +176,13 @@ class Swing:
     def rk4_step(self, u_body, u_head):
         """6変数 (x,dx,phi,dphi,alpha,dalpha) を1ステップ進める"""
         h = self.h
+        # 1次ローパスフィルター (時定数 tau_u)
+        alpha_f = h / self.tau_u
+        self.u_body_filt += (u_body - self.u_body_filt) * alpha_f
+        self.u_head_filt += (u_head - self.u_head_filt) * alpha_f
+        u_body = self.u_body_filt
+        u_head = self.u_head_filt
+
         x0, dx0 = self.x, self.z
         p0, dp0 = self.phi, self.d_phi
         a0, da0 = self.alpha, self.d_alpha
@@ -208,12 +228,15 @@ class Swing:
 
 
     def observe(self):
-        """ブランコ単体のエネルギーを返す (報酬計算用)"""
-        m0, G = self.m0, self.G
+        """ブランコのエネルギーを返す (報酬計算用)
+        ロープ+人体全体が座面位置で振れる運動エネルギーと位置エネルギー。
+        頭部・胴体の相対振動エネルギーは含めない。"""
         L = self.L
-        x, z = self.x, self.z
+        m0, M, G = self.m0, self.M, self.G
+        x, dx = self.x, self.z
 
-        # ブランコ(ロープ+座面)の力学的エネルギー
-        Esw = m0 * L**2 * z**2 / 6.0 - 0.5 * m0 * L * math.cos(x) * G
-        return Esw
+        T_sw = 0.5 * (m0/3 + M) * L**2 * dx**2
+        V_sw = -(m0/2 + M) * G * L * math.cos(x)
+
+        return T_sw + V_sw
 
