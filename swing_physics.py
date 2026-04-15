@@ -16,14 +16,18 @@ class Swing:
 
     M = 50   
     Lh = 1.58  
-    m1=0.626*M  
-    m2=0.246*M  
-    m3=0.128*M   
-    L1=0.501*Lh  
-    L2=0.249*Lh  
-    L3=0.25*Lh   
-    a=L2*(m3+0.5*m2)/M  
-    b=L2-a  
+    m1t=0.545*M   # 胴体(頭部除く上半身)
+    m1h=0.081*M   # 頭部
+    m1=m1t+m1h    # 旧m1互換(上半身全体)
+    m2=0.246*M
+    m3=0.128*M
+    L1t=0.411*Lh  # 胴体長(座面～首)
+    L1h=0.089*Lh  # 頭部長(首～頭頂)
+    L1=L1t+L1h    # 旧L1互換
+    L2=0.249*Lh
+    L3=0.25*Lh
+    a=L2*(m3+0.5*m2)/M
+    b=L2-a
 
 
     def __init__(self,eps = -0.006, chn = 4,x=0, phi_init=-20, delta_phi_0=15,
@@ -45,6 +49,10 @@ class Swing:
         self.VR = VR
         self.coef_Hooke = coef_Hooke
         self.torq_ai = 0
+        self.torq_ai_head = 0  # 頭部AIトルク
+        self.u_body_filt = 0.0  # ローパスフィルター後の腰トルク
+        self.u_head_filt = 0.0  # ローパスフィルター後の頭トルク
+        self.tau_u = 0.1        # トルクフィルターの時定数 [s]
 
         self.L =self.cNM[self.chn]  
         self.m0=self.cNG[self.chn]  
@@ -65,16 +73,29 @@ class Swing:
 
     def reset(self):
         r=random.uniform(0.9, 1.1) #少しのランダム性
-        self.phi=r*self.phi_init* math.cos(0.1* math.pi) + self.delta_phi_0 #体初期角
-        self.d_phi=-r*self.omega_phi*self.phi_init* math.sin( 0.1* math.pi) #初期角速度
-        self.z=1.e-60 
-        self.z00=1. 
-        self.t= self.t1= self.t2 =0 
+        # バイアス付きランダム初期条件: 静止スタートを優先
+        # 40%の確率で完全静止スタート、60%の確率でランダム振幅(0〜最大)
+        if random.random() < 0.4:
+            scale = 0.0  # 完全静止スタート
+        else:
+            scale = random.uniform(0.0, 1.0)  # 0〜最大初期振幅
+        phi_init_s = scale * self.phi_init
+        x_init_s   = scale * self.x_init
+        self.phi=r*phi_init_s* math.cos(0.1* math.pi) + self.delta_phi_0 #体初期角
+        self.d_phi=-r*self.omega_phi*phi_init_s* math.sin( 0.1* math.pi) #初期角速度
+        self.z=1.e-60
+        self.z00=1.
+        self.t= self.t1= self.t2 =0
         self.n = 0
-        self.x = self.x_init
+        self.x = x_init_s
 
-        self.oldz= self.dz= self.oldd_phi= self.d2_phi=0 
-        self.psi= self.d_psi= self.d2_psi=0 
+        self.u_body_filt = 0.0
+        self.u_head_filt = 0.0
+        self.oldz= self.dz= self.oldd_phi= self.d2_phi=0
+        self.alpha= 0       # 頭部の頸部関節角(胴体からの相対角)
+        self.d_alpha= 0     # 頭部角速度
+        self.d2_alpha= 0    # 頭部角加速度
+        self.psi= self.d_psi= self.d2_psi=0
 
         self.phimax= self.xmax= -99 
         self.phimin= self.xmin =99 
@@ -89,114 +110,133 @@ class Swing:
         print((f"iner:{self.coef_iner},cent:{self.coef_cent},grav:{self.coef_grav}"
                f",Hooke:{self.coef_Hooke},omega:{self.omega_phi:.2f}"))
 
-    def f(self,q,dq):
-        return dq
+    def calc_accel(self, x, dx, phi, dphi, alpha, dalpha, u_body, u_head):
+        """3x3連立を解いて d2x, d2phi, d2alpha を返す"""
+        L = self.L
+        L1t, L1h = self.L1t, self.L1h
+        m0, m1t, m1h = self.m0, self.m1t, self.m1h
+        G = self.G
+
+        s_px = math.sin(phi - x)
+        c_px = math.cos(phi - x)
+        s_ax = math.sin(alpha - x)
+        c_ax = math.cos(alpha - x)
+        s_ap = math.sin(alpha - phi)
+        c_ap = math.cos(alpha - phi)
+
+        # 質量行列
+        A = (m0/3 + m1t + m1h) * L**2
+        B = m1t * L1t**2 / 3 + m1h * L1t**2
+        C = m1h * L1h**2 / 3
+        D = -(m1t*L1t/2 + m1h*L1t) * L * c_px
+        E = -m1h * (L1h/2) * L * c_ax
+        F = m1h * L1t * (L1h/2) * c_ap
+
+        # 右辺
+        Rx = (-(m1t*L1t/2 + m1h*L1t) * L * s_px * dphi**2
+              - m1h*(L1h/2) * L * s_ax * dalpha**2
+              - (m0/2 + m1t + m1h) * G * L * math.sin(x))
+
+        # 腰部のバネ復元力 + ダンパ
+        k_waist = 144.0  # [Nm/rad] 重力不安定化(~113)+ 余裕(~31)で固有周期2.65s
+        c_waist = 10.0   # [Nm·s/rad] 漕ぎを許しつつ第2モードを抑制
+        torq_waist = -k_waist * (phi - x) - c_waist * (dphi - dx)
+
+        Rphi = (-(m1t*L1t/2 + m1h*L1t) * L * s_px * dx**2
+                + m1h*L1t*(L1h/2) * s_ap * dalpha**2
+                - (m1t/2 + m1h) * G * L1t * math.sin(phi)
+                + torq_waist
+                + u_body)
+
+        # 首のバネ復元力 + ダンパ (頭部を胴体に剛結合相当)
+        k_neck = 2000.0  # [Nm/rad]
+        c_neck = 50.0    # [Nm·s/rad]
+        torq_neck = -k_neck * (alpha - phi) - c_neck * (dalpha - dphi)
+
+        Ralpha = (-m1h*(L1h/2) * L * s_ax * dx**2
+                  - m1h*L1t*(L1h/2) * s_ap * dphi**2
+                  - (m1h/2) * G * L1h * math.sin(alpha)
+                  + torq_neck
+                  + u_head)
+
+        # 3x3連立 (クラメルの公式)
+        det = A*(B*C - F**2) - D*(D*C - F*E) + E*(D*F - B*E)
+        d2x     = ((B*C-F**2)*Rx + (E*F-D*C)*Rphi + (D*F-B*E)*Ralpha) / det
+        d2phi   = ((E*F-D*C)*Rx + (A*C-E**2)*Rphi + (D*E-A*F)*Ralpha) / det
+        d2alpha = ((D*F-B*E)*Rx + (D*E-A*F)*Rphi + (A*B-D**2)*Ralpha) / det
+
+        # トルク記録
+        self.torq_ai = u_body
+        self.torq_ai_head = u_head
+        self.torq_grav = (m0/2 + m1t + m1h) * G * L * math.sin(x)
+
+        return d2x, d2phi, d2alpha
 
 
-    def  gLB(self,phi,d_phi,u):   #上体の運動方程式 , u が AI から渡されるトルク
-        m0,M,m1,m2,m3,G =self.m0,self.M,self.m1,self.m2,self.m3,self.G
-        L,L1,L2,L3,a,b =self.L,self.L1,self.L2,self.L3,self.a,self.b
-        omega_phi,delta_phi_0 = self.omega_phi,self.delta_phi_0
-        coef_iner,coef_cent,coef_grav=self.coef_iner,self.coef_cent,self.coef_grav
-        x,z,dz=self.x,self.z,self.dz
-        coef_Hooke=self.coef_Hooke 
-        
-        c_phi= math.cos(phi)
-        s_phi= math.sin(phi)
-        c_x  = math.cos(x)
-        s_x  = math.sin(x)
-        iner = (-2*L1/3 +L*c_phi -a*s_phi)*dz
-        cent = ( L*s_phi+a*c_phi)*z**2
-        grav =  math.sin( x*int(self.VR!=1) +phi )*G  #VRが1でない Gsin(x+\phi),1のときGsin\phi
-        Hooke = -1.*omega_phi**2*( phi-delta_phi_0 )*L1/1.5  # 変位に比例する復元力
-        # トルク合算
-        acc= (coef_iner*iner+coef_cent*cent+coef_grav*grav+coef_Hooke*Hooke+u)*1.5/L1 
+    def rk4_step(self, u_body, u_head):
+        """6変数 (x,dx,phi,dphi,alpha,dalpha) を1ステップ進める"""
+        h = self.h
+        # 1次ローパスフィルター (時定数 tau_u)
+        alpha_f = h / self.tau_u
+        self.u_body_filt += (u_body - self.u_body_filt) * alpha_f
+        self.u_head_filt += (u_head - self.u_head_filt) * alpha_f
+        u_body = self.u_body_filt
+        u_head = self.u_head_filt
 
-        self.torq_LB = acc *0.5*m1*L1 *L1 /1.5 
-        self.torq_Hooke = coef_Hooke*Hooke*0.5*m1*L1
-        self.torq_iner = coef_iner*iner*0.5*m1*L1 
-        self.torq_cent = coef_cent*cent*0.5*m1*L1
-        self.torq_grav = coef_grav*grav*0.5*m1*L1 
-        self.torq_ai   = u*0.5*m1*L1
-        return acc; 
+        x0, dx0 = self.x, self.z
+        p0, dp0 = self.phi, self.d_phi
+        a0, da0 = self.alpha, self.d_alpha
 
+        # k1
+        ax1, ap1, aa1 = self.calc_accel(x0, dx0, p0, dp0, a0, da0, u_body, u_head)
+        kx1, kdx1 = h*dx0, h*ax1
+        kp1, kdp1 = h*dp0, h*ap1
+        ka1, kda1 = h*da0, h*aa1
 
+        # k2
+        ax2, ap2, aa2 = self.calc_accel(
+            x0+kx1/2, dx0+kdx1/2, p0+kp1/2, dp0+kdp1/2, a0+ka1/2, da0+kda1/2, u_body, u_head)
+        kx2, kdx2 = h*(dx0+kdx1/2), h*ax2
+        kp2, kdp2 = h*(dp0+kdp1/2), h*ap2
+        ka2, kda2 = h*(da0+kda1/2), h*aa2
 
-    def g(self,x,z):
-        m0,M,m1,m2,m3,G =self.m0,self.M,self.m1,self.m2,self.m3,self.G
-        L,L1,L2,L3,a,b =self.L,self.L1,self.L2,self.L3,self.a,self.b
-        omega_phi,delta_phi_0 = self.omega_phi,self.delta_phi_0
-        Res_sw2,Res_sw1,Res_sw0=self.Res_sw2,self.Res_sw1,self.Res_sw0
-        phi,d_phi,d2_phi,psi,d_psi,d2_psi=self.phi,self.d_phi,self.d2_phi,self.psi,self.d_psi,self.d2_psi
+        # k3
+        ax3, ap3, aa3 = self.calc_accel(
+            x0+kx2/2, dx0+kdx2/2, p0+kp2/2, dp0+kdp2/2, a0+ka2/2, da0+kda2/2, u_body, u_head)
+        kx3, kdx3 = h*(dx0+kdx2/2), h*ax3
+        kp3, kdp3 = h*(dp0+kdp2/2), h*ap3
+        ka3, kda3 = h*(da0+kda2/2), h*aa3
 
-        c_psi= math.cos(psi)
-        s_psi= math.sin(psi)
-        c_phi= math.cos(phi)
-        s_phi=math.sin(phi)
-        c_x  =math.cos(x)
-        s_x  =math.sin(x)
-        I0 = (m0/3.+M)*L**2 +m1*L1**2/3.+m2*b**3/(3*L2) +m2*a**3/(3*L2)+m3*b**2 +m3*L3**2/3. +m1*a**2
-        Ip = m1*L1*(-L*c_phi+a*s_phi) + m3*L3*(L*c_psi+b*s_psi)
-        Np = m1*L1*d_phi*( L*s_phi+a*c_phi)*z+0.5*m1*L1*d_phi**2*( L*s_phi+a*c_phi) \
-            +m3*L3*d_psi*(-L*s_psi+b*c_psi)*z +0.5*m3*L3*d_psi**2*(-L*s_psi+b*c_psi)
-        Nd = m1*L1**2*d2_phi/3. +0.5*m1*L1*(-L*c_phi+a*s_phi)*d2_phi \
-            +m3*L3**2*d2_psi/3.+0.5*m3*L3*(L*c_psi+b*s_psi)*d2_psi
-        N0 = (0.5*m0+M)*L*s_x*G  + (-m1*a+m3*b+0.5*m2*(b**2-a**2)/L2)*c_x*G
-        Ng = -0.5*m1*L1*math.sin(x+phi)*G  + 0.5*m3*L3*math.sin(x+psi)*G
-        Er = Res_sw2*math.copysign(1,z)*z*z*L*L*L +Res_sw1*z*L*L + math.copysign(1,z)*Res_sw0
-        acc = -(Np+Nd+N0+Ng+Er)/(I0+Ip)
-        return acc
+        # k4
+        ax4, ap4, aa4 = self.calc_accel(
+            x0+kx3, dx0+kdx3, p0+kp3, dp0+kdp3, a0+ka3, da0+kda3, u_body, u_head)
+        kx4, kdx4 = h*(dx0+kdx3), h*ax4
+        kp4, kdp4 = h*(dp0+kdp3), h*ap4
+        ka4, kda4 = h*(da0+kda3), h*aa4
 
+        # 更新
+        self.x      += (kx1  + 2*kx2  + 2*kx3  + kx4 ) / 6
+        self.z      += (kdx1 + 2*kdx2 + 2*kdx3 + kdx4) / 6
+        self.phi    += (kp1  + 2*kp2  + 2*kp3  + kp4 ) / 6
+        self.d_phi  += (kdp1 + 2*kdp2 + 2*kdp3 + kdp4) / 6
+        self.alpha  += (ka1  + 2*ka2  + 2*ka3  + ka4 ) / 6
+        self.d_alpha+= (kda1 + 2*kda2 + 2*kda3 + kda4) / 6
 
-
-    def LB_rk4(self,u):
-        k1 = self.h*  self.f(self.phi ,self.d_phi ) 
-        c1 = self.h*self.gLB(self.phi ,self.d_phi,u) 
-        k2 = self.h*  self.f(self.phi+0.5*k1 ,self.d_phi+0.5*c1)
-        c2 = self.h*self.gLB(self.phi+0.5*k1 ,self.d_phi+0.5*c1,u)
-        k3 = self.h*  self.f(self.phi+0.5*k2 ,self.d_phi+0.5*c2)
-        c3 = self.h*self.gLB(self.phi+0.5*k2 ,self.d_phi+0.5*c2,u)
-        k4 = self.h*  self.f(self.phi+k3     ,self.d_phi+c3)
-        c4 = self.h*self.gLB(self.phi+k3     ,self.d_phi+c3,u)
-        self.phi += (k1 + 2.*k2 + 2.*k3 + k4)/6.
-        self.d_phi += (c1 + 2.*c2 + 2.*c3 + c4)/6.
-        self.d2_phi=(c1 + 2.*c2 + 2.*c3 + c4)/(self.h*6.)
-        #print(f"a {self.phi,self.d_phi,self.d2_phi,self.x,self.z,self.dz}")
-
-
-
-    def SW_rk4(self):
-        k1 = self.h*self.f(self.x ,self.z)  
-        c1 = self.h*self.g(self.x ,self.z)    
-        k2 = self.h*self.f(self.x+0.5*k1 ,self.z+0.5*c1)  
-        c2 = self.h*self.g(self.x+0.5*k1 ,self.z+0.5*c1)   
-        k3 = self.h*self.f(self.x+0.5*k2 ,self.z+0.5*c2)  
-        c3 = self.h*self.g(self.x+0.5*k2 ,self.z+0.5*c2)  
-        k4 = self.h*self.f(self.x+k3     ,self.z+c3)   
-        c4 = self.h*self.g(self.x+k3     ,self.z+c3)
-        self.x += (k1 + 2.*k2 + 2.*k3 + k4)/6. 
-        self.z += (c1 + 2.*c2 + 2.*c3 + c4)/6.   
-        self.dz=(c1 + 2.*c2 + 2.*c3 + c4)/(self.h*6.)
-        #print(f"b {self.phi,self.d_phi,self.d2_phi,self.x,self.z,self.dz}")
+        self.dz     = (kdx1 + 2*kdx2 + 2*kdx3 + kdx4) / (h*6)
+        self.d2_phi = (kdp1 + 2*kdp2 + 2*kdp3 + kdp4) / (h*6)
+        self.d2_alpha=(kda1 + 2*kda2 + 2*kda3 + kda4) / (h*6)
 
 
     def observe(self):
-        m0,M,m1,m2,m3,G =self.m0,self.M,self.m1,self.m2,self.m3,self.G
-        L,L1,L2,L3,a,b =self.L,self.L1,self.L2,self.L3,self.a,self.b
-        phi,d_phi,d2_phi,psi,d_psi,d2_psi=self.phi,self.d_phi,self.d2_phi,self.psi,self.d_psi,self.d2_psi
-        x,z,dz=self.x,self.z,self.dz
-        c_psi= math.cos(psi)
-        s_psi= math.sin(psi)
-        c_phi= math.cos(phi)
-        s_phi=math.sin(phi)
-        c_x  =math.cos(x)
-        s_x  =math.sin(x)
+        """ブランコのエネルギーを返す (報酬計算用)
+        ロープ+人体全体が座面位置で振れる運動エネルギーと位置エネルギー。
+        頭部・胴体の相対振動エネルギーは含めない。"""
+        L = self.L
+        m0, M, G = self.m0, self.M, self.G
+        x, dx = self.x, self.z
 
-        Esw = m0*L**2*z**2/6.-0.5*m0*L*c_x*G #ブランコだけ
+        T_sw = 0.5 * (m0/3 + M) * L**2 * dx**2
+        V_sw = -(m0/2 + M) * G * L * math.cos(x)
 
-        E = 0.5*((m0/3.+M)*L**2 +m1*(L1**2/3.+a**2) +m2*(a**2-a*b+b**2)/3. +m3*(L3**2/3.+b**2))*z**2\
-           +0.5*m1*L1*(  L1*(2*z*d_phi+d_phi**2)/3.+(-L*c_phi+a*s_phi)*(z**2+z*d_phi) )\
-           +0.5*m3*L3*(  L3*(2*z*d_psi+d_psi**2)/3.+( L*c_phi+b*s_phi)*(z**2+z*d_psi) )\
-           -(0.5*m0+M)*L*c_x*G +0.5*m1*L1*math.cos(x+phi)*G -0.5*m3*L3*math.sin(x+psi)*G
-        return Esw
+        return T_sw + V_sw
 

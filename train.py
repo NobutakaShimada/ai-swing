@@ -5,11 +5,11 @@ from swing_env import SwingEnv
 env = SwingEnv()
 
 # モデルの作成 (MlpPolicy: 64x2層)
-model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003)
+model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003, ent_coef=0.01)
 
 # 学習開始
 print("ブランコの漕ぎ方を学習中...")
-model.learn(total_timesteps=1000000)
+model.learn(total_timesteps=3000000)
 
 # 保存
 model.save("ai_swing_model")
@@ -18,8 +18,9 @@ model.save("ai_swing_model")
 # --- 学習済みモデルでテスト走行 ---
 print("AIによるテスト走行中...")
 test_env = SwingEnv()
-log_data = ("episode,t,x,z,dz,phi,d_phi,d2_phi,torq_LB,torq_Hooke,"
-            "torq_iner,torq_cent,torq_grav,torq_ai\n")
+log_data = ("episode,t,x,z,dz,phi,d_phi,d2_phi,"
+            "alpha,d_alpha,d2_alpha,"
+            "torq_grav,torq_ai,torq_ai_head\n")
 
 num_test_episodes = 3  # 何回テスト走行させるか
 
@@ -34,8 +35,8 @@ for episode in range(num_test_episodes):
         # データの記録（episode番号付き）
         sw = test_env.sw
         log_data += (f"{episode},{sw.t},{sw.x},{sw.z},{sw.dz},{sw.phi},{sw.d_phi},{sw.d2_phi},"
-                     f"{sw.torq_LB},{sw.torq_Hooke},{sw.torq_iner},{sw.torq_cent},{sw.torq_grav},"
-                     f"{sw.torq_ai}\n")
+                     f"{sw.alpha},{sw.d_alpha},{sw.d2_alpha},"
+                     f"{sw.torq_grav},{sw.torq_ai},{sw.torq_ai_head}\n")
         
         if terminated or truncated:
             print(f"終了 {'terminated' if terminated else 'truncated'}")
