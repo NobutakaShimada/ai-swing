@@ -25,7 +25,7 @@ t = obs['t'].values
 x = obs['x'].values
 phi = obs['phi'].values
 d_phi = obs['d_phi'].values
-psi = 0
+psi = obs['psi'].values
 atMLB = p2mA(d_phi)
 
 # パラメータ設定
@@ -107,8 +107,8 @@ while running :
         pygame.draw.line(screen, colors['leg'], hip, knee, widths['leg'])
 
         # 下腿 (膝 → 足先)
-        rx3 = L3*100*np.cos(x[frame_idx]+psi+d)
-        ry3 = L3*100*np.sin(x[frame_idx]+psi+d)
+        rx3 = L3*100*np.cos(psi[frame_idx]+d)
+        ry3 = L3*100*np.sin(psi[frame_idx]+d)
         foot = (int(knee[0]+rx3), int(knee[1]-ry3))
         pygame.draw.line(screen, colors['leg'], knee, foot, widths['leg'])
 

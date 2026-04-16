@@ -19,25 +19,25 @@ model.save("ai_swing_model")
 print("AIによるテスト走行中...")
 test_env = SwingEnv()
 log_data = ("episode,t,x,z,dz,phi,d_phi,d2_phi,"
-            "alpha,d_alpha,d2_alpha,"
-            "torq_grav,torq_ai,torq_ai_head\n")
+            "psi,d_psi,d2_psi,"
+            "torq_grav,torq_ai,torq_ai_knee\n")
 
 num_test_episodes = 3  # 何回テスト走行させるか
 
 for episode in range(num_test_episodes):
     obs, _ = test_env.reset()
     print(f"Episode{episode+1} 開始")
-    
+
     for _ in range(2000): # 1エピソードあたりの最大ステップ
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, terminated, truncated, info = test_env.step(action)
-        
+
         # データの記録（episode番号付き）
         sw = test_env.sw
         log_data += (f"{episode},{sw.t},{sw.x},{sw.z},{sw.dz},{sw.phi},{sw.d_phi},{sw.d2_phi},"
-                     f"{sw.alpha},{sw.d_alpha},{sw.d2_alpha},"
-                     f"{sw.torq_grav},{sw.torq_ai},{sw.torq_ai_head}\n")
-        
+                     f"{sw.psi},{sw.d_psi},{sw.d2_psi},"
+                     f"{sw.torq_grav},{sw.torq_ai},{sw.torq_ai_knee}\n")
+
         if terminated or truncated:
             print(f"終了 {'terminated' if terminated else 'truncated'}")
             break # ステップのループを抜けて、次のエピソード（reset）へ
