@@ -153,8 +153,8 @@ SKIP_GIF = 4  # 4フレームに1枚 = 80ms間隔
 for frame in range(gif_start_zc, gif_end_zc, SKIP_GIF):
     surf = pygame.Surface((GIF_W, GIF_H))
     surf.fill((245, 245, 250))
-    # ゴースト (この区間の先頭から)
-    for i in range(frame - 1, gif_start_zc - 1, -1):
+    # ゴースト (エピソード先頭からの全履歴)
+    for i in range(frame - 1, -1, -1):
         if atMLB[i] > 0:
             draw_figure(surf, gif_cx, gif_cy, i, ghost_colors, ghost_widths, (255, 220, 190))
     # 現在
@@ -201,9 +201,8 @@ hero_surf.fill((245, 245, 250))
 for pi, fidx in enumerate(hero_frames):
     px = pi * PANEL_W + PANEL_W // 2
     py = PANEL_H // 2 + 20
-    # ゴースト: 直前数秒分のatMLB
-    lookback = int(5.0 / 0.02)  # 5秒分
-    for i in range(fidx - 1, max(-1, fidx - lookback), -1):
+    # ゴースト: エピソード先頭からの全履歴
+    for i in range(fidx - 1, -1, -1):
         if atMLB[i] > 0:
             draw_figure(hero_surf, px, py, i, ghost_colors, ghost_widths, (255, 220, 190), scale=80)
     # 現在フレーム
