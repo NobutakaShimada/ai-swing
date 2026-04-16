@@ -1,12 +1,22 @@
 # AI Swing — 強化学習でブランコを漕ぐ (膝関節モデル)
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/rotation_swing.mp4" width="480" autoplay loop muted></video>
+  <img src="max_amplitude.gif" alt="最大振幅での漕ぎ動作 (等速ループ)" width="420">
 </p>
+
+*▲ 最大振幅 (±90°, 水平超え) 付近の 3 周期分を等速ループ表示。ゴースト残像で振り子の弧が見えます。*
+
+![cold-start hero](hero_cold_start.png)
+
+*▲ 各スナップショットには直前数秒分の履歴をゴースト重畳表示。スイングの弧が段階的に広がっていく様子がわかります。*
+
+![one full period at max amplitude](one_period_strip.png)
+
+*▲ 最大振幅到達時の 1 周期を 9 コマに等間隔サンプル。脚の伸展・屈曲によるパラメトリック励振が見て取れます。*
 
 https://github.com/NobutakaShimada/ai-swing/raw/main/rotation_swing.mp4
 
-*▲ 完全静止から 114 秒で 360° 回転を達成するまでの全過程 (2 倍速)。ゴースト残像で振幅が徐々に育つ様子が見えます。*
+*▲ 完全静止から 114 秒で 360° 回転を達成するまでの全過程 (2 倍速動画)。*
 
 PPO (Proximal Policy Optimization) で学習したエージェントが、**完全静止状態からブランコを漕ぎ出し、114 秒で 360° 一回転**するまでの実装です。
 
