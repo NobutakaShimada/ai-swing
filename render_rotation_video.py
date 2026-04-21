@@ -69,9 +69,9 @@ def draw_figure(surf, frame_idx, colors, widths, head_color):
     ry2a = a * 100 * np.cos(x[frame_idx] - d)
     hip = (int(seat[0] + rx2a), int(seat[1] - ry2a))
 
-    # 上体(腰→首)
-    rx1 = -L1 * 100 * np.cos(x[frame_idx] + phi[frame_idx] + d)
-    ry1 = -L1 * 100 * np.sin(x[frame_idx] + phi[frame_idx] + d)
+    # 上体(腰→首): phi は絶対角(鉛直基準)なので x を加算しない
+    rx1 = -L1 * 100 * np.cos(phi[frame_idx] + d)
+    ry1 = -L1 * 100 * np.sin(phi[frame_idx] + d)
     torso_frac = 0.80
     neck = (int(hip[0] + rx1 * torso_frac), int(hip[1] - ry1 * torso_frac))
     pygame.draw.line(surf, colors['torso'], hip, neck, widths['torso'])
